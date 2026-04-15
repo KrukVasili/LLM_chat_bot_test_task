@@ -8,12 +8,14 @@ import structlog
 from fastapi import FastAPI, Request, Response
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.api import chat as chat_router
+from app.api.chat import router as chat_router
 from app.core.config import get_settings
 from app.core.database import engine, get_db
 from app.core.logging import setup_logging
 
-log = structlog.get_logger()
+settings = get_settings()
+setup_logging(settings.log)
+logger = structlog.get_logger()
 
 
 @asynccontextmanager
@@ -24,10 +26,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Shutdown: корректное закрытие пула соединений.
     """
     # Startup
-    settings = get_settings()
-    setup_logging(settings.log)
-
-    logger = structlog.get_logger()
     logger.info(
         "Application starting",
         host=settings.app.host,
@@ -55,56 +53,43 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # TODO: llm engine
 
 
-def create_app() -> FastAPI:
-    """Factory-паттерн для создания приложения. Упрощает тестирование и конфигурирование."""
-    settings = get_settings()
+app = FastAPI(
+    title="LLM Chat Microservice",
+    version="0.1.0",
+    description="Production-ready chat service with LLM inference",
+    lifespan=lifespan,
+    docs_url="/docs" if settings.app.debug else None,
+    openapi_url="/openapi.json" if settings.app.debug else None,
+)
 
-    app = FastAPI(
-        title="LLM Chat Microservice",
-        version="0.1.0",
-        description="Production-ready chat service with LLM inference (llama-cpp-python, GGUF)",
-        lifespan=lifespan,
-        docs_url="/docs" if settings.app.debug else None,
-        openapi_url="/openapi.json" if settings.app.debug else None,
+
+# Middleware
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next) -> Response:
+    request_id = request.headers.get("X-Request-Id", str(uuid4()))
+    structlog.contextvars.bind_contextvars(
+        request_id=str(uuid4()),
+        method=request.method,
+        path=request.url.path,
+        client=request.client.host if request.client else None,
     )
+    logger = structlog.get_logger()
+    logger.info("HTTP request started")
 
-    # Middleware
-    @app.middleware("http")
-    async def request_context_middleware(request: Request, call_next) -> Response:
-        request_id = request.headers.get("X-Request-Id", str(uuid4()))
-        structlog.contextvars.bind_contextvars(
-            request_id=str(uuid4()),
-            method=request.method,
-            path=request.url.path,
-            client=request.client.host if request.client else None,
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-Id"] = request_id
+        logger.info(
+            "HTTP request completed",
+            status_code=response.status_code,
+            duration_ms=getattr(response, "_duration_ms", None),
         )
-        logger = structlog.get_logger()
-        logger.info("HTTP request started")
-
-        try:
-            response = await call_next(request)
-            response.headers["X-Request-Id"] = request_id
-            logger.info(
-                "HTTP request completed",
-                status_code=response.status_code,
-                duration_ms=getattr(response, "_duration_ms", None),
-            )
-            return response
-        except Exception as e:
-            logger.error("HTTP request failed", error=str(e), exc_info=True)
-            raise
-
-    # TODO: exception_handler, health_check, root_endpoint,
-
-    # routers
-    app.include_router(
-        chat_router.router,
-        prefix="/api/v1",
-        tags=["chat"],
-    )
-
-    return app
+        return response
+    except Exception as e:
+        logger.error("HTTP request failed", error=str(e), exc_info=True)
+        raise
 
 
-# Глобальная точка входа для uvicorn / docker
-app = create_app()
+app.include_router(chat_router, prefix="/api/v1", tags=["chat"])
+
+# TODO: exception_handler, health_check, root_endpoint,
