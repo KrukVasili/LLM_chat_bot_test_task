@@ -16,7 +16,7 @@ class SessionRepository:
         self.db = db
 
     async def create(self, data: CreateSessionRequest) -> Session:
-        """Создаёт новую сессию. Коммит оставляет на вызывающем (транзакции управляются выше)."""
+        """Создаёт новую сессию."""
         session = Session(
             model_name=data.model_name,
             generation_params=(
@@ -24,7 +24,6 @@ class SessionRepository:
             ),
         )
         self.db.add(session)
-        await self.db.flush()
         log.info("Session created", session_id=session.id)
         return session
 

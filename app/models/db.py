@@ -29,7 +29,7 @@ class Session(Base):
     )
 
     messages: Mapped[list["Message"]] = relationship(
-        lazy="raise", cascade="all, delete-orphan"
+        back_populates="session", lazy="raise", cascade="all, delete-orphan"
     )
 
 
