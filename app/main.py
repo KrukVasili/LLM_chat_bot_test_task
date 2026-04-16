@@ -12,6 +12,8 @@ from app.api.chat import router as chat_router
 from app.core.config import get_settings
 from app.core.database import engine, get_db
 from app.core.logging import setup_logging
+from app.models.db import Base
+from app.services.llm_service import LLMService
 
 settings = get_settings()
 setup_logging(settings.log)
@@ -32,25 +34,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         port=settings.app.port,
         debug=settings.app.debug,
         db_url=settings.db.url,
+        model_path=settings.llm.model_path,
     )
-    # DB connection check
+    # connection
     try:
         async with engine.begin() as conn:
-            await conn.run_sync(lambda _: None)
+            await conn.run_sync(Base.metadata.create_all)
         logger.info("Database connection established")
+
+        app.state.llm_service = await LLMService.create(settings.llm, settings.chat)
+        logger.info("LLM Service initialized successfully")
+
     except Exception as e:
-        logger.error("Database connection failed", error=str(e))
+        logger.critical("Startup failed", error=str(e), exc_info=True)
+        raise
 
     yield
 
     # Shutdown
     logger.info("Graceful shutdown initiated")
 
-    if isinstance(engine, AsyncEngine):
-        await engine.dispose()
-        logger.info("Database engine disposed")
-
-    # TODO: llm engine
+    if hasattr(app.state, "llm_service"):
+        await app.state.llm_service.close()
+    await engine.dispose()
+    logger.info("Application shut down gracefully")
 
 
 app = FastAPI(
@@ -59,7 +66,6 @@ app = FastAPI(
     description="Production-ready chat service with LLM inference",
     lifespan=lifespan,
     docs_url="/docs" if settings.app.debug else None,
-    openapi_url="/openapi.json" if settings.app.debug else None,
 )
 
 

@@ -135,7 +135,7 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
+#.env
 .envrc
 .venv
 env/
@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# task
+
+task.md
+
+data/chat_dev.db
+
+models/*.gguf

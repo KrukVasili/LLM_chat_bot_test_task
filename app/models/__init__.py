@@ -1,3 +1,15 @@
-from .schemas import ChatRequest, ChatResponse, HistoryItem, SessionHistory
+from .schemas import (
+    ChatRequest,
+    ChatResponse,
+    CreateSessionRequest,
+    HistoryItem,
+    SessionHistory,
+)
 
-__all__ = ["ChatRequest", "ChatResponse", "SessionHistory", "HistoryItem"]
+__all__ = [
+    "ChatRequest",
+    "ChatResponse",
+    "SessionHistory",
+    "HistoryItem",
+    "CreateSessionRequest",
+]

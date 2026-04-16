@@ -24,6 +24,7 @@ class SessionRepository:
             ),
         )
         self.db.add(session)
+        await self.db.flush()
         log.info("Session created", session_id=session.id)
         return session
 
@@ -35,8 +36,10 @@ class SessionRepository:
     async def delete(self, session_id: str) -> bool:
         session = await self.get_by_id(session_id)
         if not session:
+            log.info("No such session", session_id=session_id)
             return False
         await self.db.delete(session)
+        await self.db.commit()
         log.info("Session deleted", session_id=session_id)
         return True
 

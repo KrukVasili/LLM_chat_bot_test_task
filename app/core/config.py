@@ -26,7 +26,7 @@ class DatabaseSettings(BaseSettings):
 
 class LLMSettings(BaseSettings):
     model_path: Path = Field(
-        default=Path("models/model.q4_k_m.gguf"),
+        default=Path("models/*.gguf"),
         description="Путь к GGUF-модели. Обязательно квантованная q4_k_m или аналог.",
     )
     context_window: int = Field(default=4096, ge=512, description="N_ctx для llama.cpp")

@@ -23,7 +23,7 @@ class ChatRequest(BaseModel):
 class CreateSessionRequest(BaseModel):
     """Опционально: явное создание сессии с параметрами"""
 
-    model_name: Optional[str] = None  # если поддерживаем несколько моделей
+    model_name: Optional[str] = None
     temperature: Optional[Annotated[float, Field(ge=0.0, le=2.0)]] = None
     system_prompt: Optional[str] = None
 

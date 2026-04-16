@@ -1,13 +1,17 @@
+from datetime import datetime, timezone
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import ChatRequest, ChatResponse, SessionHistory
+from app.models import ChatRequest, ChatResponse, CreateSessionRequest, SessionHistory
 from app.repositories import MessageRepository, SessionRepository
+from app.services.llm_service import LLMService
 
+settings = get_settings()
 log = structlog.get_logger()
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -20,6 +24,15 @@ def get_message_repo(db: Annotated[AsyncSession, Depends(get_db)]) -> MessageRep
     return MessageRepository(db)
 
 
+async def get_llm_service(request: Request) -> LLMService:
+    if not hasattr(request.app.state, "llm_service"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LLM service not ready",
+        )
+    return request.app.state.llm_service
+
+
 @router.post(
     "",
     response_model=ChatResponse,
@@ -29,22 +42,60 @@ def get_message_repo(db: Annotated[AsyncSession, Depends(get_db)]) -> MessageRep
 async def send_message(
     request: ChatRequest,
     session_id: Annotated[str | None, Header(alias="X-Session-Id")] = None,
+    db: AsyncSession = Depends(get_db),
     session_repo: Annotated[SessionRepository, Depends(get_session_repo)] = None,
     message_repo: Annotated[MessageRepository, Depends(get_message_repo)] = None,
+    llm: Annotated[LLMService, Depends(get_llm_service)] = None,
 ) -> ChatResponse:
     """
     Отправить сообщение в чат.
     Если X-Session-Id не передан --- создастся новая сессия.
     """
-    # Заглушка
-    log.info(
-        "Message received",
-        session_id=session_id or "new",
-        message_length=len(request.message),
+
+    # Управление сессией
+    if session_id:
+        session = await session_repo.get_by_id(session_id)
+    else:
+        session = await session_repo.create(
+            CreateSessionRequest(
+                model_name=str(settings.llm.model_path), temperature=request.temperature
+            )
+        )
+        session_id = session.id
+
+    # Загрзука истории для контекста
+    history_limit = settings.chat.history_limit
+    history_db = await message_repo.get_last_n(session_id, history_limit)
+    history_dicts = [{"role": m.role, "content": m.content} for m in history_db]
+
+    # Генерация ответа
+    temperature = request.temperature or session.generation_params.get("temperature")
+    prompt = llm.format_prompt(history_dicts, request.message)
+
+    try:
+        assistant_text, tokens_used = await llm.generate_response(
+            prompt, temperature=temperature
+        )
+    except Exception as e:
+        log.error("LLM generation failed", error=str(e), exc_info=True)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to generate response"
+        )
+
+    # Сохранение в БД
+    await message_repo.create(session_id, "user", request.message)
+    await message_repo.create(
+        session_id, "assistant", assistant_text, tokens_count=tokens_used
     )
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="ChatService will be implemented next. Repository & routing are ready.",
+    await db.commit()
+
+    # Формирование ответа
+    return ChatResponse(
+        session_id=session_id,
+        role="assistant",
+        content=assistant_text,
+        tokens_used=tokens_used,
+        created_at=datetime.now(timezone.utc),
     )
 
 

@@ -15,6 +15,7 @@ dependencies = [
     "pytest-asyncio>=0.24.0",
     "aiosqlite>=0.20.0",
     "sqlalchemy[asyncio]>=2.0.0",
+    "llama-cpp-python>=0.3.20",
 ]
 
 [tool.ruff]
@@ -23,7 +24,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-# ignore, extend-ignore, isort, flake8-* тоже переноси в [tool.ruff.lint]
 
 [tool.mypy]
 python_version = "3.13"
