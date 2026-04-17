@@ -89,7 +89,6 @@ async def request_context_middleware(request: Request, call_next) -> Response:
         logger.info(
             "HTTP request completed",
             status_code=response.status_code,
-            duration_ms=getattr(response, "_duration_ms", None),
         )
         return response
     except Exception as e:

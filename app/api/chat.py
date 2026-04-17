@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from datetime import datetime, timezone
 from typing import Annotated, Union
 
@@ -91,7 +92,11 @@ async def send_message_stream(
     history_db = await message_repo.get_last_n(session_id, history_limit)
     history_dicts = [{"role": m.role, "content": m.content} for m in history_db]
 
-    temperature = request.temperature or session.generation_params.get("temperature")
+    temperature = (
+        request.temperature
+        or session.generation_params.get("temperature")
+        or getattr(settings.llm, "temperature", 0.7)
+    )
     max_tokens = settings.chat.max_tokens_per_response
     prompt = llm.format_prompt(history_dicts, request.message)
 
@@ -101,6 +106,9 @@ async def send_message_stream(
     async def event_generator():
         tokens_collected: list[str] = []
         created_at = datetime.now(timezone.utc)
+
+        request_start = time.perf_counter()
+        first_token_time: float | None = None
 
         try:
             yield format_sse(
@@ -112,10 +120,22 @@ async def send_message_stream(
             )
 
             async for token in llm.stream_response(prompt, temperature, max_tokens):
+                if first_token_time is None:
+                    first_token_time = time.perf_counter()
+
                 tokens_collected.append(token)
                 yield format_sse(token, event="message")
 
             assistant_text = "".join(tokens_collected)
+
+            generation_end = time.perf_counter()
+            total_time_sec = generation_end - request_start
+            ttft_ms = (
+                (first_token_time - request_start) * 1000 if first_token_time else None
+            )
+            tokens_per_sec = (
+                len(tokens_collected) / total_time_sec if total_time_sec > 0 else 0
+            )
 
             token_ids = llm._model.tokenize(
                 assistant_text.encode("utf-8"),
@@ -127,6 +147,17 @@ async def send_message_stream(
                 session_id, "assistant", assistant_text, tokens_count=tokens_used
             )
             await db.commit()
+
+            log.info(
+                "chat_generation_completed",
+                session_id=str(session_id),
+                tokens_used=tokens_used,
+                tokens_generated=len(tokens_collected),
+                ttft_ms=round(ttft_ms, 2) if ttft_ms else None,
+                total_time_sec=round(total_time_sec, 3),
+                tokens_per_sec=round(tokens_per_sec, 2),
+                content_length=len(assistant_text),
+            )
 
             yield format_sse(
                 {
