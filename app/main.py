@@ -12,7 +12,7 @@ from app.api.chat import router as chat_router
 from app.core.config import get_settings
 from app.core.database import engine, get_db
 from app.core.logging import setup_logging
-from app.models.db import Base
+from app.models import Base
 from app.services.llm_service import LLMService
 
 settings = get_settings()

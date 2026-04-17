@@ -4,8 +4,13 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import Message, Session
-from app.models.schemas import CreateSessionRequest, HistoryItem, SessionHistory
+from app.models import (
+    CreateSessionRequest,
+    HistoryItem,
+    Message,
+    Session,
+    SessionHistory,
+)
 
 log = structlog.get_logger()
 

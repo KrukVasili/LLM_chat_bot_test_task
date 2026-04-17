@@ -2,7 +2,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.db import Message
+from app.models import Message
 
 log = structlog.get_logger()
 
