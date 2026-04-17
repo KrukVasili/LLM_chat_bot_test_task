@@ -213,3 +213,5 @@ task.md
 data/chat_dev.db
 
 models/*.gguf
+
+app/services/test_llm.py
