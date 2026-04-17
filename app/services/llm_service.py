@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 import structlog
-from llama_cpp import CreateCompletionResponse, CreateCompletionStreamResponse, Llama
+from llama_cpp import Llama
 
 from app.core.config import ChatSettings, LLMSettings
 
@@ -49,44 +48,6 @@ class LLMService:
         log.info("Loading LLM model...")
         self._model = await asyncio.to_thread(_load)
         log.info("LLM model loaded successfully")
-
-    async def generate_response(
-        self,
-        prompt: str,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-    ) -> tuple[str, int]:
-        """
-        Генерирует полный ответ от модели.
-        Возвращает: (текст_ответа, количество_токенов)
-        """
-        if self._model is None:
-            raise RuntimeError("Model not initialized")
-
-        temp = temperature or self.chat_config.temperature
-        tokens_limit = max_tokens or self.chat_config.max_tokens_per_response
-
-        async with self._inference_lock:
-
-            def _generate():
-                return self._model(
-                    prompt=prompt,
-                    temperature=temp,
-                    max_tokens=tokens_limit,
-                    stop=["<|im_end|>"],
-                    echo=False,
-                )
-
-            # Выполняем синхронный инференс в потоке
-            result: CreateCompletionResponse = await asyncio.to_thread(_generate)
-
-        text = result["choices"][0]["text"].strip()
-        tokens_used = (
-            result["usage"]["completion_tokens"] if "usage" in result else None
-        )
-
-        log.debug("LLM generation completed", tokens=tokens_used)
-        return text, tokens_used or 0
 
     async def stream_response(
         self,

@@ -21,30 +21,11 @@ class ChatRequest(BaseModel):
 
 
 class CreateSessionRequest(BaseModel):
-    """Опционально: явное создание сессии с параметрами"""
+    """Явное создание сессии с параметрами"""
 
     model_name: Optional[str] = None
     temperature: Optional[Annotated[float, Field(ge=0.0, le=2.0)]] = None
     system_prompt: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    """Базовый ответ на сообщение (без стриминга)"""
-
-    session_id: UUID
-    role: Literal["assistant"] = "assistant"
-    content: str
-    tokens_used: Optional[int] = None
-    created_at: datetime
-
-
-class StreamChunk(BaseModel):
-    """Фрагмент для SSE-стриминга"""
-
-    session_id: UUID
-    delta: str  # новый токен/часть токена
-    finish_reason: Optional[Literal["stop", "length", "error"]] = None
-    tokens_used: Optional[int] = None
 
 
 class HistoryItem(BaseModel):
@@ -64,14 +45,3 @@ class SessionHistory(BaseModel):
     model_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-
-
-class SessionMeta(BaseModel):
-    """Краткая информация о сессии"""
-
-    session_id: UUID
-    model_name: str
-    temperature: float
-    created_at: datetime
-    updated_at: datetime
-    message_count: int

@@ -1,7 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import Annotated, Any, Union
+from typing import Annotated, Union
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import ChatRequest, ChatResponse, CreateSessionRequest, SessionHistory
+from app.models import ChatRequest, CreateSessionRequest, SessionHistory
 from app.repositories import MessageRepository, SessionRepository
 from app.services.llm_service import LLMService
 
@@ -50,12 +50,11 @@ def format_sse(data: Union[str, dict], event: str = "message") -> str:
 
 
 @router.post(
-    "/stream",
+    "",
     response_class=StreamingResponse,
     status_code=status.HTTP_200_OK,
     responses={
-        200: {"description": "SSE stream: meta → delta* → done/error"},
-        501: {"description": "Under construction."},
+        200: {"description": "SSE stream: meta - done/error"},
     },
 )
 async def send_message_stream(
@@ -112,7 +111,6 @@ async def send_message_stream(
                 event="meta",
             )
 
-            # Потоковая генерация токенов
             async for token in llm.stream_response(prompt, temperature, max_tokens):
                 tokens_collected.append(token)
                 yield format_sse(token, event="message")
@@ -155,74 +153,8 @@ async def send_message_stream(
         headers={
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Критично для Nginx: отключает буферизацию
+            "X-Accel-Buffering": "no",
         },
-    )
-
-
-@router.post(
-    "",
-    response_model=ChatResponse,
-    status_code=status.HTTP_200_OK,
-    responses={501: {"description": "Under construction."}},
-)
-async def send_message(
-    request: ChatRequest,
-    session_id: Annotated[str | None, Header(alias="X-Session-Id")] = None,
-    db: AsyncSession = Depends(get_db),
-    session_repo: Annotated[SessionRepository, Depends(get_session_repo)] = None,
-    message_repo: Annotated[MessageRepository, Depends(get_message_repo)] = None,
-    llm: Annotated[LLMService, Depends(get_llm_service)] = None,
-) -> ChatResponse:
-    """
-    Отправить сообщение в чат.
-    Если X-Session-Id не передан --- создастся новая сессия.
-    """
-
-    # Управление сессией
-    if session_id:
-        session = await session_repo.get_by_id(session_id)
-    else:
-        session = await session_repo.create(
-            CreateSessionRequest(
-                model_name=str(settings.llm.model_path), temperature=request.temperature
-            )
-        )
-        session_id = session.id
-
-    # Загрзука истории для контекста
-    history_limit = settings.chat.history_limit
-    history_db = await message_repo.get_last_n(session_id, history_limit)
-    history_dicts = [{"role": m.role, "content": m.content} for m in history_db]
-
-    # Генерация ответа
-    temperature = request.temperature or session.generation_params.get("temperature")
-    prompt = llm.format_prompt(history_dicts, request.message)
-
-    try:
-        assistant_text, tokens_used = await llm.generate_response(
-            prompt, temperature=temperature
-        )
-    except Exception as e:
-        log.error("LLM generation failed", error=str(e), exc_info=True)
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to generate response"
-        )
-
-    # Сохранение в БД
-    await message_repo.create(session_id, "user", request.message)
-    await message_repo.create(
-        session_id, "assistant", assistant_text, tokens_count=tokens_used
-    )
-    await db.commit()
-
-    # Формирование ответа
-    return ChatResponse(
-        session_id=session_id,
-        role="assistant",
-        content=assistant_text,
-        tokens_used=tokens_used,
-        created_at=datetime.now(timezone.utc),
     )
 
 
