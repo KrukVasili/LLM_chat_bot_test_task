@@ -93,7 +93,7 @@ class LLMService:
     def format_prompt(
         history: list[dict[str, str]],
         new_message: str,
-        system_prompt: str = "Ты полезный ассистент.",
+        system_prompt: str = "Ты полезный ассистент. Отвечай кратко, по делу, на русском языке. Сохраняй контекст диалога.",
     ) -> str:
         """Формирует промпт в формате ChatML (оптимально для Qwen2.5)."""
         prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n"

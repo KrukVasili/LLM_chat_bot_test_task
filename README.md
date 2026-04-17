@@ -1,1 +1,130 @@
-# LLM_chat_bot_test_task
+# LLM Chat Microservice
+
+Production-ready микросервис для диалога с LLM на базе FastAPI. Поддерживает управление сессиями, историю диалогов, потоковую генерацию через SSE и оптимизирован для работы на CPU в условиях ограниченных ресурсов (8–16 GB RAM).
+
+## Быстрый старт
+
+Запуск сервиса одной командой:
+
+```bash
+# 1. Клонируем репозиторий
+git clone https://github.com/KrukVasili/LLM_chat_bot_test_task.git
+cd LLM_chat_bot_test_task
+
+# 2. Скачиваем модель (Qwen2.5-7B-Instruct-Q4_K_M.gguf)
+mkdir -p models
+cd models
+wget https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+cd ..
+
+# 3. Запускаем
+docker compose up -d --build
+```
+Можете [скачать](https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf?download=true) модель прямо с сайта.
+
+---
+
+## Использование
+
+Сервис поднимается на http://localhost:8080. Docker автоматически проверяет готовность через /health.
+
+Отправить сообщение (потоковый ответ SSE):
+```bash
+curl -N -X POST http://localhost:8080/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Объясни кратко, что такое асинхронность в Python."}'
+```
+
+Получить историю сессии:
+```bash
+curl http://localhost:8080/api/v1/chat/{session_id}/history?limit=20
+```
+
+Удалить сессию:
+```bash
+curl -X DELETE http://localhost:8080/api/v1/chat/{session_id}
+```
+
+Docs
+```bash
+curl http://localhost:8080/docs
+```
+
+---
+
+## Выбор модели и формата
+
+| Параметр | Значение | Обоснование |
+|----------|----------|-------------|
+| **Формат** | `GGUF` | Нативный формат для `llama-cpp-python`. ??? |
+| **Модель** | `Qwen2.5-7B-Instruct` | ???. |
+| **Квантование** | `Q4_K_M` | ??? |
+
+---
+
+## Параметры генерации и System Prompt
+
+```python
+system_prompt = "Ты полезный ассистент. Отвечай кратко, по делу, на русском языке. Сохраняй контекст диалога."
+```
+
+| Параметр | Значение | Зачем |
+|----------|----------|-------|
+| `temperature` | `0.7` | Баланс между детерминированностью и креативностью. Ниже `0.5` → слишком сухие ответы, выше `1.0` → возможны галлюцинации. Переопределяется в запросе. |
+| `max_tokens` | `512` | Ограничивает длину ответа, предотвращает переполнение контекстного окна и снижает latency. |
+| `history_limit` | `20` | В контекст попадают только последние N сообщений. Экономит RAM и ускоряет TTFT. |
+| `n_ctx` | `4096` | Размер контекстного окна `llama.cpp`. Выбран с запасом под историю + системный промпт + ответ. |
+
+---
+
+## Мини-бенчмарк
+
+*Тестировалось на: HP 250 G7 Notebook (CPU-only), Qwen2.5-7B-Instruct-Q4_K_M.gguf, контекст 4096.*
+
+| Метрика | Значение | Примечание |
+|---------|----------|------------|
+| **TTFT** (Time To First Token) | `3.8–5.2 сек` | Зависит от системной нагрузки и состояния кэшей ОС.|
+| **Скорость генерации** | `3.4–3.6 токенов/сек` | Стабильная скорость инференса на CPU. |
+| **Потребление RAM** | `~3.3 ГБ` (стабильно) | Замерено через `docker stats`. Память преаллоцируется при загрузке (`mmap` + KV-кэш). Динамических скачков нет, что гарантирует устойчивость к OOM. |
+
+Как воспроизвести:
+```bash
+# 1. Запустите сервис
+docker compose up -d
+# 2. Запустите benchmark
+uv run python benchmarks/benchmark.py
+# 3. Параллельно следи за RAM в другом терминале
+watch -n 1 'docker stats llm-chat-service --no-stream'
+```
+
+---
+
+## Архитектура
+
+Проект следует слоистой архитектуре, адаптированной под FastAPI и асинхронный стек:
+
+| Слой | Директория | Роль |
+|------|------------|------|
+| **API / Controllers** | `app/api/` | HTTP-роутеры, SSE-стриминг, DI зависимостей |
+| **Services** | `app/services/` | Бизнес-логика: загрузка `llama.cpp`, форматирование промптов, асинхронный инференс |
+| **Repositories** | `app/repositories/` | Абстракция доступа к данным: CRUD операций над сессиями и сообщениями |
+| **Models** | `app/models/` | SQLAlchemy ORM-модели (`db.py`) + Pydantic v2 схемы валидации (`schemas.py`) |
+| **Core** | `app/core/` | Инфраструктура: конфигурация (`pydantic-settings`), async-движок БД, `structlog` |
+
+**Ключевые особенности:**
+- 🔹 Полная асинхронность: `async/await` для всех I/O, `asyncio.to_thread` для блокирующего инференса, использование `async with self._inference_lock` и `asyncio.Queue` для параллелизации streaming-а
+- 🔹 Строгая типизация: `typing.Annotated`, Pydantic v2, `mypy`-совместимые сигнатуры
+- 🔹 Устойчивость: graceful shutdown, `healthcheck`, обработка `CancelledError`, откат транзакций БД
+- 🔹 Пакетный менеджер: `uv` (lock-файл, детерминированная сборка, `--frozen`)
+
+---
+
+## Локальная разработка (без Docker)
+
+```bash
+# 1. Установка зависимостей
+uv sync
+
+# 2. Запуск сервера с autoreload
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```

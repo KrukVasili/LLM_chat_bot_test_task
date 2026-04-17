@@ -23,3 +23,4 @@ models/*.gguf
 
 # Документация
 *.md
+benchmarks/
