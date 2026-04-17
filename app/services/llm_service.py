@@ -20,6 +20,7 @@ class LLMService:
         self.llm_config = llm_config
         self.chat_config = chat_config
         self._model: Optional[Llama] = None
+        self._inference_lock = asyncio.Lock()
 
     @classmethod
     async def create(
@@ -65,17 +66,19 @@ class LLMService:
         temp = temperature or self.chat_config.temperature
         tokens_limit = max_tokens or self.chat_config.max_tokens_per_response
 
-        def _generate():
-            return self._model(
-                prompt=prompt,
-                temperature=temp,
-                max_tokens=tokens_limit,
-                stop=["<|im_end|>"],
-                echo=False,
-            )
+        async with self._inference_lock:
 
-        # Выполняем синхронный инференс в потоке
-        result: CreateCompletionResponse = await asyncio.to_thread(_generate)
+            def _generate():
+                return self._model(
+                    prompt=prompt,
+                    temperature=temp,
+                    max_tokens=tokens_limit,
+                    stop=["<|im_end|>"],
+                    echo=False,
+                )
+
+            # Выполняем синхронный инференс в потоке
+            result: CreateCompletionResponse = await asyncio.to_thread(_generate)
 
         text = result["choices"][0]["text"].strip()
         tokens_used = (
@@ -91,31 +94,39 @@ class LLMService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> AsyncGenerator[str, None]:
-        """
-        Потоковая генерация: выдаёт токены по мере готовности.
-        """
         if self._model is None:
             raise RuntimeError("Model not initialized")
 
-        temp = temperature or self.chat_config.temperature
-        tokens_limit = max_tokens or self.chat_config.max_tokens_per_response
+        async with self._inference_lock:
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-        def _stream():
-            return self._model(
-                prompt=prompt,
-                temperature=temp,
-                max_tokens=tokens_limit,
-                stop=["<|im_end|>"],
-                stream=True,
-                echo=False,
-            )
+            def _generate_sync() -> None:
+                try:
+                    for chunk in self._model(
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        stop=["<|im_end|>"],
+                        stream=True,
+                        echo=False,
+                    ):
+                        delta = chunk["choices"][0]["text"]
+                        if delta:
+                            queue.put_nowait(delta)
+                except Exception as e:
+                    log.error("Stream generation failed", error=str(e), exc_info=True)
+                    queue.put_nowait(f"[ERROR] {e}")
+                finally:
+                    queue.put_nowait(None)
 
-        stream: CreateCompletionStreamResponse = await asyncio.to_thread(_stream)
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _generate_sync)
 
-        for chunk in stream:
-            delta = chunk["choices"][0]["text"]
-            if delta:
-                yield delta
+            while True:
+                token = await queue.get()
+                if token is None:
+                    break
+                yield token
 
     @staticmethod
     def format_prompt(
