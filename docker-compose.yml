@@ -1,0 +1,27 @@
+services:
+  chat-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    container_name: llm-chat-service
+    
+    ports:
+      - "8080:8080"
+    
+    # Тома: хостовая папка : папка внутри контейнера : режим
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    
+    env_file:
+      - .env
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    
+    restart: unless-stopped

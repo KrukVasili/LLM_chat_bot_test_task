@@ -1,0 +1,25 @@
+# Виртуальные окружения
+.venv/
+
+# Кэш и артефакты
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Логи и БД
+data/*.db
+
+# Модель
+models/*.gguf
+
+# Git и окружение
+.git/
+.env
+*.env.local
+
+# Документация
+*.md
